@@ -1,0 +1,5 @@
+{
+  "name": "DeFiFolio Builder",
+  "description": "A decentralized portfolio builder allowing users to create, visualize, and export their crypto identity and assets for IPFS storage, featuring AI-powered bio generation.",
+  "requestFramePermissions": []
+}
