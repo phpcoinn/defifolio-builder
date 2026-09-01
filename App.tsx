@@ -608,7 +608,7 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen bg-slate-50 dark:bg-crypto-dark text-slate-800 dark:text-slate-200 font-sans overflow-hidden flex-col md:flex-row">
+    <div className="flex h-full w-full bg-slate-50 dark:bg-crypto-dark text-slate-800 dark:text-slate-200 font-sans overflow-hidden flex-col md:flex-row">
       {/* Hidden Import Input */}
       <input 
         type="file" 
@@ -619,7 +619,7 @@ function App() {
       />
 
        {/* Mobile Nav - Visible only on small screens */}
-       <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-around z-50 pb-safe">
+       <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-around z-50 pb-[env(safe-area-inset-bottom)]">
           <button
             onClick={() => setMobileTab('editor')}
             className={`flex flex-col items-center gap-1 p-2 ${mobileTab === 'editor' ? 'text-crypto-accent' : 'text-slate-400 dark:text-slate-500'}`}

@@ -1,5 +1,16 @@
 /* Tailwind directives removed - using CDN */
 
+/* h-screen (100vh) is taller than the visible area on mobile browsers
+   whenever the address bar is showing, which permanently hides the last
+   chunk of any inner overflow-y-auto region behind the browser chrome.
+   Pin the real height here once, in dvh where supported (falls back to
+   the vh value below on browsers that don't understand dvh), and have
+   everything else in the app inherit it via h-full. */
+body {
+  height: 100vh;
+  height: 100dvh;
+}
+
 /* Custom scrollbar for webkit */
 ::-webkit-scrollbar {
   width: 8px;
