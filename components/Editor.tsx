@@ -33,9 +33,16 @@ export const Editor: React.FC<EditorProps> = ({ profile, setProfile }) => {
     setProfile(prev => ({ ...prev, [field]: value }));
   };
 
+  const MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2MB — images are embedded as base64 in drafts/exports
+
   const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > MAX_IMAGE_BYTES) {
+        alert('Avatar image is too large. Please use an image under 2MB.');
+        e.target.value = '';
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         updateField('avatarUrl', reader.result as string);
@@ -47,6 +54,11 @@ export const Editor: React.FC<EditorProps> = ({ profile, setProfile }) => {
   const handleCoverUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      if (file.size > MAX_IMAGE_BYTES) {
+        alert('Cover image is too large. Please use an image under 2MB.');
+        e.target.value = '';
+        return;
+      }
       const reader = new FileReader();
       reader.onloadend = () => {
         updateField('coverImageUrl', reader.result as string);

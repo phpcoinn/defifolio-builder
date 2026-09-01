@@ -1,7 +1,6 @@
 import { UserProfile } from "../types";
 
-// TODO: Update this to point to your actual PHP server if running locally (e.g. http://localhost:8000/backend/api.php)
-const BACKEND_URL = 'https://dap.ad/ipfs.php'; 
+const BACKEND_URL = 'http://localhost:8034/api.php';
 
 export const generateBio = async (profile: UserProfile): Promise<string> => {
   try {

@@ -1,15 +1,21 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Editor } from './components/Editor';
 import { PortfolioPreview } from './components/PortfolioPreview';
-import { INITIAL_PROFILE, UserProfile } from './types';
-import { UploadCloud, Smartphone, Monitor, Download, FileJson, Rocket, X, Copy, ExternalLink, Check, Globe, Edit3, Eye, Sun, Moon } from 'lucide-react';
+import { INITIAL_PROFILE, UserProfile, SocialLink, CryptoAddress } from './types';
+import { UploadCloud, Smartphone, Monitor, Download, FileJson, Rocket, X, Copy, ExternalLink, Check, Globe, Edit3, Eye, Sun, Moon, Wallet, LogOut } from 'lucide-react';
+import { requestWalletAuth, requestWalletTransactionSignature } from './services/walletConnect';
+import { getWalletSession, logoutWalletSession, WalletAccount } from './services/walletApi';
+import { buildPublishTransaction, submitTransaction, findLatestPublish, PublishRecord, CHAIN_ID } from './services/txData';
 
 // Configuration
-const PUBLISH_API_URL = 'https://dap.ad/ipfs.php?q=publish_ipfs';
-const IPFS_GATEWAY_URL = 'https://ipfs.io/ipfs/'; // Configurable Gateway URL
+const PUBLISH_API_URL = 'http://localhost:8034/api.php?q=publish_ipfs';
+const IPFS_GATEWAY_URL = 'https://ipfs.phpcoin.net/ipfs/'; // Our own node's gateway - reliable for content we just published
+const permanentLinkUrl = (address: string) => `https://defifolio.dap.ad/p/${address}`;
+const explorerTxUrl = (txId: string) => `https://main1.phpcoin.net/apps/explorer/tx.php?id=${txId}`;
 const STORAGE_KEY = 'defifolio_draft_v1';
 const THEME_STORAGE_KEY = 'defifolio_theme';
-const SHOW_DNS_SECTION = false; // Set to true to show the PHPCoin DNS promotion
+const SHOW_DNS_SECTION = true; // Shows the dap.ad custom-domain promotion after publishing
+const SHOW_STABLE_LINK_SECTION = true; // Shows the "login with PHPCoin for a stable link" promotion after publishing
 
 // SVG Paths for the exported HTML to avoid dependency on external icon libs
 const ICONS: Record<string, string> = {
@@ -24,6 +30,77 @@ const ICONS: Record<string, string> = {
   qrcode: '<rect width="5" height="5" x="3" y="3" rx="1"/><rect width="5" height="5" x="16" y="3" rx="1"/><rect width="5" height="5" x="3" y="16" rx="1"/><path d="M21 16h-3a2 2 0 0 0-2 2v3"/><path d="M21 21v.01"/><path d="M12 7v3a2 2 0 0 1-2 2H7"/><path d="M3 12h.01"/><path d="M12 3h.01"/><path d="M12 16v.01"/><path d="M16 12h1"/><path d="M21 12v.01"/><path d="M12 21v-1"/>',
   close: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   sparkles: '<path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L12 3Z"/>'
+};
+
+// Sanitization helpers for the exported/published HTML. All profile fields can come
+// from an imported file, so nothing is trusted when interpolated into raw HTML strings.
+const escapeHtml = (value: unknown): string =>
+  String(value ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c] as string
+  ));
+
+const isSafeColor = (hex: string) => /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(hex || '');
+const sanitizeColor = (hex: string, fallback: string) => (isSafeColor(hex) ? hex : fallback);
+
+// Only allow schemes that can't execute script (blocks javascript:, vbscript:, data:text/html, etc).
+const sanitizeUrl = (url: string, allowedSchemes: string[], fallback: string) => {
+  const trimmed = (url || '').trim();
+  if (!trimmed) return fallback;
+  const schemeMatch = trimmed.match(/^([a-z][a-z0-9+.-]*):/i);
+  if (!schemeMatch) return trimmed; // scheme-less (relative/protocol-relative) is safe
+  return allowedSchemes.includes(schemeMatch[1].toLowerCase()) ? trimmed : fallback;
+};
+const sanitizeLinkUrl = (url: string) => sanitizeUrl(url, ['http', 'https', 'mailto'], '#');
+const sanitizeImageUrl = (url: string, fallback: string) => sanitizeUrl(url, ['http', 'https', 'data'], fallback);
+
+// Validates and coerces an imported (untrusted) profile JSON blob into a well-shaped
+// UserProfile. Imported files can come from anywhere, so nothing about their structure
+// is trusted — wrong types, missing fields, or oversized arrays must not crash the app.
+const MAX_LIST_ITEMS = 50;
+const MAX_TEXT_LENGTH = 500;
+const MAX_IMAGE_URL_LENGTH = 3_000_000; // generous cap for base64 data URIs
+
+const asString = (value: unknown, maxLength: number): string =>
+  typeof value === 'string' ? value.slice(0, maxLength) : '';
+
+const validateImportedProfile = (data: unknown): UserProfile | null => {
+  if (!data || typeof data !== 'object') return null;
+  const d = data as Record<string, unknown>;
+  const name = asString(d.name, 100).trim();
+  if (!name) return null;
+
+  const rawSocials = Array.isArray(d.socials) ? d.socials.slice(0, MAX_LIST_ITEMS) : [];
+  const rawAddresses = Array.isArray(d.addresses) ? d.addresses.slice(0, MAX_LIST_ITEMS) : [];
+
+  const socials: SocialLink[] = rawSocials
+    .filter((s): s is Record<string, unknown> => !!s && typeof s === 'object')
+    .map((s, i) => ({
+      id: asString(s.id, 50) || `social-${i}`,
+      platform: (asString(s.platform, 30) || 'website') as SocialLink['platform'],
+      url: asString(s.url, MAX_TEXT_LENGTH),
+    }));
+
+  const addresses: CryptoAddress[] = rawAddresses
+    .filter((a): a is Record<string, unknown> => !!a && typeof a === 'object')
+    .map((a, i) => ({
+      id: asString(a.id, 50) || `address-${i}`,
+      network: asString(a.network, 50),
+      address: asString(a.address, 200),
+      label: asString(a.label, 50),
+      color: isSafeColor(a.color as string) ? (a.color as string) : '#627EEA',
+    }));
+
+  return {
+    name,
+    title: asString(d.title, 150),
+    bio: asString(d.bio, MAX_TEXT_LENGTH),
+    avatarUrl: asString(d.avatarUrl, MAX_IMAGE_URL_LENGTH),
+    coverImageUrl: d.coverImageUrl ? asString(d.coverImageUrl, MAX_IMAGE_URL_LENGTH) : undefined,
+    themeColor: isSafeColor(d.themeColor as string) ? (d.themeColor as string) : '#818cf8',
+    backgroundColor: isSafeColor(d.backgroundColor as string) ? (d.backgroundColor as string) : '#0b1120',
+    socials,
+    addresses,
+  };
 };
 
 function App() {
@@ -45,6 +122,12 @@ function App() {
   const [publishResult, setPublishResult] = useState<{ cid: string; url: string } | null>(null);
   const [hasCopiedCid, setHasCopiedCid] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+  const [walletAccount, setWalletAccount] = useState<WalletAccount | null>(null);
+  const [isWalletConnecting, setIsWalletConnecting] = useState(false);
+  const [isPinning, setIsPinning] = useState(false);
+  const [existingPublish, setExistingPublish] = useState<PublishRecord | null>(null);
+  const [justUpdatedTxId, setJustUpdatedTxId] = useState<string | null>(null);
+  const [isCheckingExistingPublish, setIsCheckingExistingPublish] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -52,6 +135,27 @@ function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
   }, [profile]);
+
+  // Restore an existing wallet session on load
+  useEffect(() => {
+    getWalletSession()
+      .then((session) => setWalletAccount(session.account ?? null))
+      .catch(() => setWalletAccount(null));
+  }, []);
+
+  // Whenever we know who's signed in, check whether they already have a
+  // permanent link so we don't re-pitch "get one" to someone who already has one.
+  useEffect(() => {
+    if (!walletAccount) {
+      setExistingPublish(null);
+      return;
+    }
+    setIsCheckingExistingPublish(true);
+    findLatestPublish(walletAccount.address)
+      .then(setExistingPublish)
+      .catch(() => setExistingPublish(null))
+      .finally(() => setIsCheckingExistingPublish(false));
+  }, [walletAccount]);
 
   // Sync theme choice to <html> class and localStorage
   useEffect(() => {
@@ -61,9 +165,9 @@ function App() {
 
   // Helper for generating the HTML
   const generateHtml = (p: UserProfile) => {
-    const primaryColor = p.themeColor;
-    const bgColor = p.backgroundColor;
-    
+    const primaryColor = sanitizeColor(p.themeColor, '#818cf8');
+    const bgColor = sanitizeColor(p.backgroundColor, '#0b1120');
+
     // Luminance logic for export
     const getLuminance = (hex: string) => {
       if(!/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) return 0;
@@ -99,32 +203,33 @@ function App() {
     const socialsHtml = p.socials.map(s => {
         const iconSvg = ICONS[s.platform] || ICONS.link;
         return `
-        <a href="${s.url}" target="_blank" rel="noreferrer" class="social-link">
+        <a href="${escapeHtml(sanitizeLinkUrl(s.url))}" target="_blank" rel="noreferrer" class="social-link">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none">${iconSvg}</svg>
-            <span style="font-size: 0.875rem; font-weight: 500; text-transform: capitalize;">${s.platform}</span>
+            <span style="font-size: 0.875rem; font-weight: 500; text-transform: capitalize;">${escapeHtml(s.platform)}</span>
         </a>`;
     }).join('');
 
     const addressesHtml = p.addresses.map(a => {
         // Only show label badge if label text exists
-        const labelHtml = a.label && a.label.trim() !== "" ? `<span class="label-badge">${a.label}</span>` : '';
+        const labelHtml = a.label && a.label.trim() !== "" ? `<span class="label-badge">${escapeHtml(a.label)}</span>` : '';
+        const safeAddress = escapeHtml(a.address);
         return `
         <div class="address-card" onclick="void(0)">
             <div class="card-header">
                 <div>
                      ${labelHtml}
-                     <h3 style="font-size: 1.125rem; font-weight: 700; color: ${textColor};">${a.network}</h3>
+                     <h3 style="font-size: 1.125rem; font-weight: 700; color: ${textColor};">${escapeHtml(a.network)}</h3>
                 </div>
                 <div style="display: flex; gap: 0.5rem;">
-                     <button onclick="showQr('${a.address}')" class="icon-btn">
+                     <button data-address="${safeAddress}" onclick="showQr(this.dataset.address)" class="icon-btn">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.qrcode}</svg>
                      </button>
-                     <button onclick="copyToClipboard('${a.address}', this)" class="icon-btn">
+                     <button data-address="${safeAddress}" onclick="copyToClipboard(this.dataset.address, this)" class="icon-btn">
                         <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS.copy}</svg>
                      </button>
                 </div>
             </div>
-            <div class="address-text">${a.address}</div>
+            <div class="address-text">${safeAddress}</div>
         </div>`;
     }).join('');
 
@@ -133,7 +238,7 @@ function App() {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${p.name} - Portfolio</title>
+    <title>${escapeHtml(p.name)} - Portfolio</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body { font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; background-color: ${bgColor}; color: ${textColor}; margin: 0; min-height: 100vh; display: flex; flex-direction: column; }
@@ -182,11 +287,11 @@ function App() {
 
     <!-- Cover -->
     <div style="position: relative; width: 100%;">
-        ${p.coverImageUrl ? 
+        ${p.coverImageUrl ?
             `<div style="width: 100%; height: 16rem; position: relative;">
-                <img src="${p.coverImageUrl}" alt="Cover" style="width: 100%; height: 100%; object-fit: cover;">
+                <img src="${escapeHtml(sanitizeImageUrl(p.coverImageUrl, ''))}" alt="Cover" style="width: 100%; height: 100%; object-fit: cover;">
                 <div style="position: absolute; inset: 0; background: linear-gradient(to top, ${bgColor}, transparent);"></div>
-            </div>` : 
+            </div>` :
             `<div style="width: 100%; height: 16rem; background: linear-gradient(to bottom, ${hexToRgba(primaryColor, 0.3)}, ${hexToRgba(primaryColor, 0.05)}, transparent);"></div>`
         }
     </div>
@@ -196,13 +301,13 @@ function App() {
         
         <!-- Avatar -->
         <div style="width: 8rem; height: 8rem; border-radius: 9999px; border: 4px solid ${p.coverImageUrl ? bgColor : hexToRgba(primaryColor, 0.2)}; background-color: ${isLightMode ? '#fff' : '#0f172a'}; overflow: hidden; margin-bottom: 1rem; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);">
-            <img src="${p.avatarUrl}" alt="${p.name}" style="width: 100%; height: 100%; object-fit: cover;">
+            <img src="${escapeHtml(sanitizeImageUrl(p.avatarUrl, ''))}" alt="${escapeHtml(p.name)}" style="width: 100%; height: 100%; object-fit: cover;">
         </div>
 
         <!-- Info -->
-        <h1 style="font-size: 1.875rem; font-weight: 700; letter-spacing: -0.025em; margin-bottom: 0.5rem; text-align: center;">${p.name}</h1>
-        <p style="font-size: 1rem; font-weight: 500; color: ${primaryColor}; margin-bottom: 0.75rem; text-align: center;">${p.title}</p>
-        <p style="font-size: 0.875rem; line-height: 1.625; color: ${mutedTextColor}; margin-bottom: 1.5rem; text-align: center; max-width: 24rem;">${p.bio}</p>
+        <h1 style="font-size: 1.875rem; font-weight: 700; letter-spacing: -0.025em; margin-bottom: 0.5rem; text-align: center;">${escapeHtml(p.name)}</h1>
+        <p style="font-size: 1rem; font-weight: 500; color: ${primaryColor}; margin-bottom: 0.75rem; text-align: center;">${escapeHtml(p.title)}</p>
+        <p style="font-size: 0.875rem; line-height: 1.625; color: ${mutedTextColor}; margin-bottom: 1.5rem; text-align: center; max-width: 24rem;">${escapeHtml(p.bio)}</p>
 
         <!-- Socials -->
         <div style="display: flex; flex-wrap: wrap; justify-content: center; gap: 0.75rem; margin-bottom: 2rem;">
@@ -216,7 +321,7 @@ function App() {
 
         <!-- Footer -->
         <div style="margin-top: 3rem; text-align: center; opacity: 0.5;">
-            <a href="https://phpcoin.net" target="_blank" style="text-decoration: none; color: ${mutedTextColor}; font-size: 0.75rem; font-weight: 500; display: inline-flex; align-items: center; gap: 0.25rem;">
+            <a href="https://defifolio.dap.ad" target="_blank" style="text-decoration: none; color: ${mutedTextColor}; font-size: 0.75rem; font-weight: 500; display: inline-flex; align-items: center; gap: 0.25rem;">
                 Built with PHPCoin DeFiFolio
                 <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
             </a>
@@ -242,7 +347,7 @@ function App() {
 
     <!-- EMBEDDED CONFIGURATION DATA -->
     <script id="defifolio-data" type="application/json">
-        ${JSON.stringify(p)}
+        ${JSON.stringify(p).replace(/</g, '\\u003c')}
     </script>
 
     <script>
@@ -261,7 +366,7 @@ function App() {
             const img = document.getElementById('qr-image');
             const addrText = document.getElementById('qr-address');
             
-            img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + address;
+            img.src = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' + encodeURIComponent(address);
             addrText.textContent = address;
             modal.classList.add('flex');
         }
@@ -337,6 +442,47 @@ function App() {
     }
   };
 
+  const handlePhpCoinLogin = async () => {
+    setIsWalletConnecting(true);
+    try {
+      const account = await requestWalletAuth();
+      setWalletAccount(account);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Wallet login failed.');
+    } finally {
+      setIsWalletConnecting(false);
+    }
+  };
+
+  const handlePhpCoinLogout = async () => {
+    try {
+      await logoutWalletSession();
+    } finally {
+      setWalletAccount(null);
+      setJustUpdatedTxId(null);
+    }
+  };
+
+  const handlePinToAddress = async () => {
+    if (!walletAccount || !publishResult) return;
+    setIsPinning(true);
+    try {
+      const { tx, signatureBase } = await buildPublishTransaction(
+        walletAccount.address,
+        walletAccount.public_key,
+        publishResult.cid
+      );
+      const signedTx = await requestWalletTransactionSignature(tx, CHAIN_ID, signatureBase);
+      const txId = await submitTransaction(signedTx);
+      setExistingPublish({ txId, cid: publishResult.cid });
+      setJustUpdatedTxId(txId);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not create the permanent link.');
+    } finally {
+      setIsPinning(false);
+    }
+  };
+
   const handleImportClick = () => {
     fileInputRef.current?.click();
   };
@@ -354,8 +500,8 @@ function App() {
           const scriptTag = doc.getElementById('defifolio-data');
           
           if (scriptTag && scriptTag.textContent) {
-            const importedProfile = JSON.parse(scriptTag.textContent);
-            if (importedProfile && importedProfile.name) {
+            const importedProfile = validateImportedProfile(JSON.parse(scriptTag.textContent));
+            if (importedProfile) {
                setProfile(importedProfile);
                alert('Profile loaded successfully!');
             } else {
@@ -546,29 +692,114 @@ function App() {
                             rel="noreferrer"
                             className="inline-flex items-center gap-2 text-indigo-400 hover:text-indigo-300 text-sm font-medium"
                          >
-                            View Live Site <ExternalLink size={14} />
+                            View Live Profile <ExternalLink size={14} />
                          </a>
+                         <p className="text-slate-400 dark:text-slate-500 text-[11px] mt-1">
+                            Temporary link — not pinned, may eventually expire.
+                         </p>
                     </div>
                 </div>
 
-                {SHOW_DNS_SECTION && (
-                    <div className="bg-gradient-to-r from-indigo-900/40 to-purple-900/40 border border-indigo-500/30 rounded-xl p-4">
+                {SHOW_STABLE_LINK_SECTION && (
+                    <div className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 mb-6">
                         <div className="flex items-start gap-3">
-                            <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-400">
+                            <div className="p-2 bg-cyan-500/10 dark:bg-cyan-500/20 rounded-lg text-cyan-600 dark:text-cyan-400">
+                                <Wallet size={20} />
+                            </div>
+                            <div className="flex-1">
+                                <h3 className="text-slate-900 dark:text-white font-bold text-sm mb-1">
+                                    {existingPublish ? 'Your Permanent Link' : 'Get a Free Permanent Link'}
+                                </h3>
+                                {walletAccount ? (
+                                    <>
+                                        <p className="text-slate-500 dark:text-slate-400 text-xs mb-3">
+                                            Signed in as <code className="text-slate-700 dark:text-slate-300">{walletAccount.address.slice(0, 6)}…{walletAccount.address.slice(-4)}</code>.{' '}
+                                            {isCheckingExistingPublish
+                                                ? 'Checking for an existing link...'
+                                                : existingPublish && publishResult && existingPublish.cid === publishResult.cid
+                                                ? 'Your permanent link points at this publish.'
+                                                : existingPublish
+                                                ? 'Your permanent link points at an older publish.'
+                                                : 'Point your permanent link at this publish.'}
+                                        </p>
+                                        {existingPublish && (
+                                            <div className="bg-green-500/10 border border-green-500/20 text-green-700 dark:text-green-400 text-xs rounded-lg p-2 mb-3 break-all">
+                                                <a
+                                                    href={permanentLinkUrl(walletAccount.address)}
+                                                    target="_blank"
+                                                    rel="noreferrer"
+                                                    className="underline hover:no-underline"
+                                                >
+                                                    {permanentLinkUrl(walletAccount.address)}
+                                                </a>
+                                                {justUpdatedTxId && justUpdatedTxId === existingPublish.txId && (
+                                                    <div className="mt-1 text-slate-600 dark:text-slate-400">
+                                                        Submitted — tx{' '}
+                                                        <a
+                                                            href={explorerTxUrl(justUpdatedTxId)}
+                                                            target="_blank"
+                                                            rel="noreferrer"
+                                                            className="underline hover:no-underline"
+                                                        >
+                                                            <code>{justUpdatedTxId}</code>
+                                                        </a>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                        {!isCheckingExistingPublish && (!existingPublish || (publishResult && existingPublish.cid !== publishResult.cid)) && (
+                                            <button
+                                                onClick={handlePinToAddress}
+                                                disabled={isPinning}
+                                                className="w-full bg-cyan-600 hover:bg-cyan-500 text-white text-center py-2 rounded-lg text-xs font-bold transition-colors disabled:opacity-60 mb-2"
+                                            >
+                                                {isPinning ? 'Signing...' : existingPublish ? 'Update to This Publish' : 'Get Permanent Link'}
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={handlePhpCoinLogout}
+                                            className="w-full flex items-center justify-center gap-1.5 bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 text-center py-2 rounded-lg text-xs font-bold transition-colors"
+                                        >
+                                            <LogOut size={12} /> Logout
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <p className="text-slate-500 dark:text-slate-400 text-xs mb-3">
+                                            Sign in with PHPCoin to get a stable link that always follows your latest publish, for just a small network fee.
+                                        </p>
+                                        <button
+                                            onClick={handlePhpCoinLogin}
+                                            disabled={isWalletConnecting}
+                                            className="w-full bg-cyan-600 hover:bg-cyan-500 text-white text-center py-2 rounded-lg text-xs font-bold transition-colors disabled:opacity-60"
+                                        >
+                                            {isWalletConnecting ? 'Connecting...' : 'Login with PHPCoin'}
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {SHOW_DNS_SECTION && (
+                    <div className="bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-900/40 dark:to-purple-900/40 border border-indigo-200 dark:border-indigo-500/30 rounded-xl p-4">
+                        <div className="flex items-start gap-3">
+                            <div className="p-2 bg-indigo-500/10 dark:bg-indigo-500/20 rounded-lg text-indigo-600 dark:text-indigo-400">
                                 <Globe size={20} />
                             </div>
                             <div>
-                                <h3 className="text-white font-bold text-sm mb-1">Get a Human-Readable Name</h3>
-                                <p className="text-slate-400 text-xs mb-3">
-                                    Map this CID to a decentralized domain (e.g. <span className="text-slate-300">alex.phpcoin</span>) using PHPCoin DNS.
+                                <h3 className="text-slate-900 dark:text-white font-bold text-sm mb-1">Get a Human-Readable Name</h3>
+                                <p className="text-slate-500 dark:text-slate-400 text-xs mb-3">
+                                    Map your profile to a decentralized domain (e.g. <span className="text-slate-700 dark:text-slate-300">alex.dap.ad</span>) using dap.ad.
                                 </p>
-                                <a 
-                                    href="https://node1.phpcoin.net/dapps/PeC85pqFgRxmevonG6diUwT4AfF7YUPSm3/dev/dns" 
+                                <a
+                                    href="https://dap.ad"
                                     target="_blank"
                                     rel="noreferrer"
                                     className="block w-full bg-indigo-600 hover:bg-indigo-500 text-white text-center py-2 rounded-lg text-xs font-bold transition-colors"
                                 >
-                                    Register on PHPCoin DNS
+                                    Register on dap.ad
                                 </a>
                             </div>
                         </div>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { UserProfile } from '../types';
-import { ExternalLink, Copy, Check, QrCode, Twitter, Github, Globe, Send, Gamepad2, Sparkles, X } from 'lucide-react';
+import { ExternalLink, Copy, Check, QrCode, Twitter, Github, Globe, Send, Gamepad2, Sparkles, X, Loader2 } from 'lucide-react';
 import { analyzePortfolio } from '../services/gemini';
 
 interface PreviewProps {
@@ -11,6 +11,7 @@ export const PortfolioPreview: React.FC<PreviewProps> = ({ profile }) => {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [activeQr, setActiveQr] = useState<string | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [hoveredSocial, setHoveredSocial] = useState<string | null>(null);
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
 
@@ -20,17 +21,20 @@ export const PortfolioPreview: React.FC<PreviewProps> = ({ profile }) => {
     setTimeout(() => setCopiedId(null), 2000);
   };
 
+  // Analysis is user-triggered (not automatic) to avoid burning API quota on every edit.
   useEffect(() => {
-    // Debounce AI analysis
-    const timer = setTimeout(async () => {
-        // Removed API Key check, now relies on backend availability
-        if (profile.addresses.length > 0) {
-            const result = await analyzePortfolio(profile);
-            setAiAnalysis(result);
-        }
-    }, 2000);
-    return () => clearTimeout(timer);
+    setAiAnalysis(null);
   }, [profile.addresses]);
+
+  const runAiAnalysis = async () => {
+    setIsAnalyzing(true);
+    try {
+      const result = await analyzePortfolio(profile);
+      setAiAnalysis(result);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
 
   const getSocialIcon = (platform: string) => {
     switch (platform) {
@@ -148,10 +152,25 @@ export const PortfolioPreview: React.FC<PreviewProps> = ({ profile }) => {
         </div>
 
         {/* AI Vibe Check */}
+        {!aiAnalysis && profile.addresses.length > 0 && (
+            <button
+                onClick={runAiAnalysis}
+                disabled={isAnalyzing}
+                className="w-full mb-8 flex items-center justify-center gap-2 py-2.5 rounded-xl border text-sm font-medium transition-all disabled:opacity-60"
+                style={{
+                    borderColor: hexToRgba(primaryColor, 0.3),
+                    color: primaryColor,
+                    backgroundColor: cardBgBase
+                }}
+            >
+                {isAnalyzing ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
+                {isAnalyzing ? 'Analyzing...' : 'Run AI Vibe Check'}
+            </button>
+        )}
         {aiAnalysis && (
-            <div 
+            <div
                 className="w-full mb-8 p-4 rounded-xl border relative overflow-hidden group"
-                style={{ 
+                style={{
                     background: `linear-gradient(135deg, ${hexToRgba(primaryColor, 0.1)}, ${cardBgBase})`,
                     borderColor: hexToRgba(primaryColor, 0.2)
                 }}
@@ -242,7 +261,7 @@ export const PortfolioPreview: React.FC<PreviewProps> = ({ profile }) => {
         {/* FOOTER */}
         <div className="mt-12 text-center opacity-50 hover:opacity-100 transition-opacity">
             <a 
-                href="https://phpcoin.net" 
+                href="https://defifolio.dap.ad"
                 target="_blank" 
                 rel="noreferrer"
                 className="text-xs font-medium flex items-center justify-center gap-1"

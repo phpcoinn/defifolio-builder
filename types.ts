@@ -38,8 +38,9 @@ export const INITIAL_PROFILE: UserProfile = {
     { id: '2', platform: 'github', url: 'https://github.com' }
   ],
   addresses: [
-    { id: '1', network: 'Ethereum', address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F', label: 'Main Vault', color: '#627EEA' },
-    { id: '2', network: 'Bitcoin', address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', label: 'Cold Storage', color: '#F7931A' },
-    { id: '3', network: 'Solana', address: 'Hv3J482kjs8283kjasd823298kjasd823', label: 'Minting', color: '#14F195' }
+    { id: '1', network: 'PHPCoin', address: 'PJgcaXQvHTHRZJdSwaW2xJmXqTNGwHDmVs', label: 'PHPCoin Wallet', color: '#F7B500' },
+    { id: '2', network: 'Ethereum', address: '0x71C7656EC7ab88b098defB751B7401B5f6d8976F', label: 'Main Vault', color: '#627EEA' },
+    { id: '3', network: 'Bitcoin', address: 'bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh', label: 'Cold Storage', color: '#F7931A' },
+    { id: '4', network: 'Solana', address: 'Hv3J482kjs8283kjasd823298kjasd823', label: 'Minting', color: '#14F195' }
   ]
 };
