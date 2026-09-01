@@ -76,6 +76,41 @@ function publish_ipfs() {
     return ["ipfsCID" => $result['cid']];
 }
 
+// Proxies a profile HTML fetch from our IPFS gateway. Needed because the
+// gateway's CORS policy only allows admin.ipfs.phpcoin.net, so the browser
+// can't fetch it directly from defifolio.dap.ad - this sidesteps that
+// entirely, since CORS is a browser-only restriction.
+function fetch_profile_html() {
+    rate_limit('fetch_profile_html', 30, 60);
+
+    $data = _getJsonData();
+    $cid = trim((string) ($data['cid'] ?? ''));
+    if ($cid === '' || !preg_match('/^[a-zA-Z0-9]+$/', $cid)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Invalid cid']);
+        exit;
+    }
+
+    $url = 'https://ipfs.phpcoin.net/ipfs/' . rawurlencode($cid);
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 15);
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+    $content = curl_exec($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curlError = curl_error($ch);
+    curl_close($ch);
+
+    if ($curlError) {
+        throw new Exception("Failed to reach IPFS gateway: $curlError");
+    }
+    if ($httpCode !== 200 || !$content) {
+        throw new Exception("Could not fetch profile content (HTTP $httpCode)");
+    }
+
+    return ['html' => $content];
+}
+
 function authSession() {
     return WalletAuth::session();
 }

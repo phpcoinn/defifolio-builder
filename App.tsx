@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Editor } from './components/Editor';
 import { PortfolioPreview } from './components/PortfolioPreview';
 import { INITIAL_PROFILE, UserProfile, SocialLink, CryptoAddress } from './types';
-import { UploadCloud, Smartphone, Monitor, Download, FileJson, Rocket, X, Copy, ExternalLink, Check, Globe, Edit3, Eye, Sun, Moon, Wallet, LogOut } from 'lucide-react';
+import { UploadCloud, Smartphone, Monitor, Download, FileJson, Rocket, X, Copy, ExternalLink, Check, Globe, Edit3, Eye, Sun, Moon, Wallet, LogOut, Save } from 'lucide-react';
 import { requestWalletAuth, requestWalletTransactionSignature } from './services/walletConnect';
 import { getWalletSession, logoutWalletSession, WalletAccount } from './services/walletApi';
 import { buildPublishTransaction, submitTransaction, findLatestPublish, PublishRecord, CHAIN_ID } from './services/txData';
@@ -143,12 +143,23 @@ function App() {
   const [existingPublish, setExistingPublish] = useState<PublishRecord | null>(null);
   const [justUpdatedTxId, setJustUpdatedTxId] = useState<string | null>(null);
   const [isCheckingExistingPublish, setIsCheckingExistingPublish] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Skips the next dirty-flag update - set right before a "fresh load" setProfile
+  // call (import, wallet load) so loading a profile doesn't itself count as an edit.
+  const skipNextDirtyFlag = useRef(true); // starts true so the initial mount doesn't count either
 
-  // Auto-save effect: Save to localStorage whenever profile changes
+  // Auto-save effect: save to localStorage whenever profile changes, and track
+  // whether there are unsaved edits (vs. a freshly loaded/saved profile).
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
+    if (skipNextDirtyFlag.current) {
+      skipNextDirtyFlag.current = false;
+    } else {
+      setHasUnsavedChanges(true);
+    }
   }, [profile]);
 
   // Restore an existing wallet session on load
@@ -411,41 +422,66 @@ function App() {
     }, 1000);
   };
 
+  // Shared by the plain "Publish to IPFS" button and the combined Save action.
+  const publishToIpfs = async (): Promise<string> => {
+    const htmlContent = generateHtml(profile);
+    const response = await fetch(PUBLISH_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html: htmlContent })
+    });
+
+    if (!response.ok) {
+        throw new Error(`Upload failed with status: ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (!data.ipfsCID) {
+        throw new Error("Invalid response: ipfsCID not found in server response.");
+    }
+    return data.ipfsCID as string;
+  };
+
+  // Shared by the "Get Permanent Link"/"Update to This Publish" button and the
+  // combined Save action.
+  const pinToChain = async (cid: string): Promise<string> => {
+    if (!walletAccount) throw new Error('Not signed in.');
+    const { tx, signatureBase } = await buildPublishTransaction(
+      walletAccount.address,
+      walletAccount.public_key,
+      cid
+    );
+    const signedTx = await requestWalletTransactionSignature(tx, CHAIN_ID, signatureBase);
+    return submitTransaction(signedTx);
+  };
+
   const handlePublish = async () => {
     setIsPublishing(true);
     try {
-        const htmlContent = generateHtml(profile);
-        
-        // Use Fetch API to send data to the backend
-        const response = await fetch(PUBLISH_API_URL, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ html: htmlContent })
-        });
-
-        if (!response.ok) {
-            throw new Error(`Upload failed with status: ${response.status}`);
-        }
-
-        const data = await response.json();
-        
-        // Expecting { ipfsCID: "..." } from the backend
-        if (data.ipfsCID) {
-             setPublishResult({
-                cid: data.ipfsCID,
-                url: `${IPFS_GATEWAY_URL}${data.ipfsCID}`
-            });
-        } else {
-             throw new Error("Invalid response: ipfsCID not found in server response.");
-        }
-
+        const cid = await publishToIpfs();
+        setPublishResult({ cid, url: `${IPFS_GATEWAY_URL}${cid}` });
     } catch (error) {
         console.error("Publishing error:", error);
         alert("Failed to publish to IPFS. Please check that the backend is running and configured correctly.");
     } finally {
         setIsPublishing(false);
+    }
+  };
+
+  const handleSaveChanges = async () => {
+    if (!walletAccount) return;
+    setIsSaving(true);
+    try {
+      const cid = await publishToIpfs();
+      setPublishResult({ cid, url: `${IPFS_GATEWAY_URL}${cid}` });
+      const txId = await pinToChain(cid);
+      setExistingPublish({ txId, cid });
+      setJustUpdatedTxId(txId);
+      setHasUnsavedChanges(false);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Could not save changes.');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -486,14 +522,24 @@ function App() {
       const record = await findLatestPublish(address);
       if (!record) return;
 
-      const response = await fetch(`${IPFS_GATEWAY_URL}${record.cid}`);
+      // Fetched through our own backend, not the IPFS gateway directly - the
+      // gateway's CORS policy doesn't allow browser fetches from this origin.
+      const response = await fetch(`${BACKEND_URL}/api.php?q=fetch_profile_html`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cid: record.cid }),
+      });
       if (!response.ok) throw new Error('Could not fetch saved profile');
+      const data = await response.json();
+      if (!data.html) throw new Error('Empty profile response');
 
-      const loadedProfile = parseProfileFromHtml(await response.text());
+      const loadedProfile = parseProfileFromHtml(data.html);
       if (!loadedProfile) return;
 
       if (confirm('Load your saved profile from PHPCoin? This will replace your current draft.')) {
+        skipNextDirtyFlag.current = true;
         setProfile(loadedProfile);
+        setHasUnsavedChanges(false);
       }
     } catch (error) {
       console.error('Failed to load profile from chain:', error);
@@ -518,13 +564,7 @@ function App() {
     if (!walletAccount || !publishResult) return;
     setIsPinning(true);
     try {
-      const { tx, signatureBase } = await buildPublishTransaction(
-        walletAccount.address,
-        walletAccount.public_key,
-        publishResult.cid
-      );
-      const signedTx = await requestWalletTransactionSignature(tx, CHAIN_ID, signatureBase);
-      const txId = await submitTransaction(signedTx);
+      const txId = await pinToChain(publishResult.cid);
       setExistingPublish({ txId, cid: publishResult.cid });
       setJustUpdatedTxId(txId);
     } catch (error) {
@@ -547,7 +587,9 @@ function App() {
         try {
           const importedProfile = parseProfileFromHtml(text);
           if (importedProfile) {
+             skipNextDirtyFlag.current = true;
              setProfile(importedProfile);
+             setHasUnsavedChanges(false);
              alert('Profile loaded successfully!');
           } else {
              alert('Could not find a valid portfolio in this file.');
@@ -609,29 +651,54 @@ function App() {
                 >
                     {isDarkMode ? <Sun size={14} /> : <Moon size={14} />}
                 </button>
+                <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
+                    <button
+                        onClick={() => setViewMode('desktop')}
+                        title="Desktop preview"
+                        className={`p-1.5 rounded transition-all ${viewMode === 'desktop' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}
+                    >
+                        <Monitor size={14} />
+                    </button>
+                    <button
+                        onClick={() => setViewMode('mobile')}
+                        title="Mobile preview"
+                        className={`p-1.5 rounded transition-all ${viewMode === 'mobile' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}
+                    >
+                        <Smartphone size={14} />
+                    </button>
+                </div>
+                {/* Import/Login live in the preview toolbar on desktop; kept here too (icon-only) for mobile, since that toolbar is hidden below md. */}
                 <button
                     onClick={handleImportClick}
-                    className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors"
+                    className="md:hidden flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 w-8 h-8 rounded-lg transition-colors"
                     title="Import existing portfolio HTML"
                 >
-                    <FileJson size={14} /> Import
+                    <FileJson size={14} />
                 </button>
                 {walletAccount ? (
-                    <button
-                        onClick={handlePhpCoinLogout}
-                        className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors"
-                        title={`Signed in as ${walletAccount.address}`}
-                    >
-                        <Wallet size={14} /> {walletAccount.address.slice(0, 6)}…{walletAccount.address.slice(-4)}
-                    </button>
+                    <div className="md:hidden flex items-center gap-1">
+                        <div
+                            className="flex items-center justify-center text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 w-8 h-8 rounded-lg"
+                            title={`Signed in as ${walletAccount.address}`}
+                        >
+                            <Wallet size={14} />
+                        </div>
+                        <button
+                            onClick={handlePhpCoinLogout}
+                            className="flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 w-8 h-8 rounded-lg transition-colors"
+                            title="Logout"
+                        >
+                            <LogOut size={14} />
+                        </button>
+                    </div>
                 ) : (
                     <button
                         onClick={handleHeaderLogin}
                         disabled={isWalletConnecting}
-                        className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-60"
+                        className="md:hidden flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 w-8 h-8 rounded-lg transition-colors disabled:opacity-60"
                         title="Login with PHPCoin to load your saved profile"
                     >
-                        <Wallet size={14} /> {isWalletConnecting ? 'Connecting...' : 'Login'}
+                        <Wallet size={14} />
                     </button>
                 )}
             </div>
@@ -645,22 +712,40 @@ function App() {
       <div className={`${mobileTab === 'preview' ? 'flex' : 'hidden'} md:flex flex-1 flex-col bg-slate-50 dark:bg-[#0f172a] relative h-full`}>
         {/* Toolbar */}
         <div className="h-16 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 md:px-6 bg-white/50 dark:bg-slate-900/50 backdrop-blur z-10 shrink-0 gap-2">
-            <div className="flex items-center gap-4 hidden md:flex">
-                <span className="text-sm text-slate-500 dark:text-slate-500 font-medium">Preview Mode</span>
-                <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
+            <div className="flex items-center gap-2 hidden md:flex">
+                <button
+                    onClick={handleImportClick}
+                    className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors"
+                    title="Import existing portfolio HTML"
+                >
+                    <FileJson size={14} /> Import
+                </button>
+                {walletAccount ? (
+                    <div className="flex items-center gap-1">
+                        <div
+                            className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg"
+                            title={`Signed in as ${walletAccount.address}`}
+                        >
+                            <Wallet size={14} /> {walletAccount.address.slice(0, 6)}…{walletAccount.address.slice(-4)}
+                        </div>
+                        <button
+                            onClick={handlePhpCoinLogout}
+                            className="flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-red-500 dark:hover:text-red-400 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 w-8 h-8 rounded-lg transition-colors"
+                            title="Logout"
+                        >
+                            <LogOut size={14} />
+                        </button>
+                    </div>
+                ) : (
                     <button
-                        onClick={() => setViewMode('desktop')}
-                        className={`p-2 rounded flex items-center gap-2 text-xs font-medium transition-all ${viewMode === 'desktop' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}
+                        onClick={handleHeaderLogin}
+                        disabled={isWalletConnecting}
+                        className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-60"
+                        title="Login with PHPCoin to load your saved profile"
                     >
-                        <Monitor size={14} /> Desktop
+                        <Wallet size={14} /> {isWalletConnecting ? 'Connecting...' : 'Login'}
                     </button>
-                    <button
-                        onClick={() => setViewMode('mobile')}
-                        className={`p-2 rounded flex items-center gap-2 text-xs font-medium transition-all ${viewMode === 'mobile' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}
-                    >
-                        <Smartphone size={14} /> Mobile
-                    </button>
-                </div>
+                )}
             </div>
 
              {/* Mobile Title */}
@@ -670,6 +755,17 @@ function App() {
               </div>
 
             <div className="flex items-center gap-2">
+                {walletAccount && hasUnsavedChanges && (
+                    <button
+                        onClick={handleSaveChanges}
+                        disabled={isSaving}
+                        title="Publish your changes to IPFS and update your permanent link"
+                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-lg shadow-emerald-500/20 disabled:opacity-70"
+                    >
+                        {isSaving ? <UploadCloud size={16} className="animate-bounce" /> : <Save size={16} />}
+                        <span className="hidden sm:inline">{isSaving ? 'Saving...' : 'Save Changes'}</span>
+                    </button>
+                )}
                 <button
                     onClick={handleDeploy}
                     disabled={isUploading || isPublishing}
@@ -685,7 +781,7 @@ function App() {
                     className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white px-3 md:px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-lg shadow-indigo-500/20 disabled:opacity-70"
                 >
                     {isPublishing ? <Rocket size={16} className="animate-bounce" /> : <Rocket size={16} />}
-                     <span className="hidden sm:inline">{isPublishing ? 'Publishing...' : 'Publish to IPFS'}</span>
+                     <span className="hidden sm:inline">{isPublishing ? 'Publishing...' : 'Publish'}</span>
                 </button>
             </div>
         </div>
