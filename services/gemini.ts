@@ -1,6 +1,6 @@
 import { UserProfile } from "../types";
 
-const BACKEND_URL = 'http://localhost:8034/api.php';
+const BACKEND_URL = (import.meta.env.VITE_BACKEND_URL || 'http://localhost:8034') + '/api.php';
 
 export const generateBio = async (profile: UserProfile): Promise<string> => {
   try {

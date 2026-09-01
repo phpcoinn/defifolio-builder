@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Secrets - never committed
+server/lib/gemini_api_key.txt
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

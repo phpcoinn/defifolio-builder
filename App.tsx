@@ -8,7 +8,8 @@ import { getWalletSession, logoutWalletSession, WalletAccount } from './services
 import { buildPublishTransaction, submitTransaction, findLatestPublish, PublishRecord, CHAIN_ID } from './services/txData';
 
 // Configuration
-const PUBLISH_API_URL = 'http://localhost:8034/api.php?q=publish_ipfs';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8034';
+const PUBLISH_API_URL = `${BACKEND_URL}/api.php?q=publish_ipfs`;
 const IPFS_GATEWAY_URL = 'https://ipfs.phpcoin.net/ipfs/'; // Our own node's gateway - reliable for content we just published
 const permanentLinkUrl = (address: string) => `https://defifolio.dap.ad/p/${address}`;
 const explorerTxUrl = (txId: string) => `https://main1.phpcoin.net/apps/explorer/tx.php?id=${txId}`;
@@ -101,6 +102,20 @@ const validateImportedProfile = (data: unknown): UserProfile | null => {
     socials,
     addresses,
   };
+};
+
+// Shared by file-based import and wallet-based profile loading - both start
+// from a full exported HTML page and pull the embedded profile JSON out of it.
+const parseProfileFromHtml = (html: string): UserProfile | null => {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(html, 'text/html');
+  const scriptTag = doc.getElementById('defifolio-data');
+  if (!scriptTag || !scriptTag.textContent) return null;
+  try {
+    return validateImportedProfile(JSON.parse(scriptTag.textContent));
+  } catch {
+    return null;
+  }
 };
 
 function App() {
@@ -463,6 +478,42 @@ function App() {
     }
   };
 
+  // Loads the caller's existing on-chain profile, if any - their PHPCoin
+  // address doubles as portable profile storage across devices. Silently
+  // does nothing if there's no published profile yet (first-time user).
+  const loadProfileFromChainIfAny = async (address: string) => {
+    try {
+      const record = await findLatestPublish(address);
+      if (!record) return;
+
+      const response = await fetch(`${IPFS_GATEWAY_URL}${record.cid}`);
+      if (!response.ok) throw new Error('Could not fetch saved profile');
+
+      const loadedProfile = parseProfileFromHtml(await response.text());
+      if (!loadedProfile) return;
+
+      if (confirm('Load your saved profile from PHPCoin? This will replace your current draft.')) {
+        setProfile(loadedProfile);
+      }
+    } catch (error) {
+      console.error('Failed to load profile from chain:', error);
+      // Don't alert - login itself still succeeded, this is a bonus on top of it.
+    }
+  };
+
+  const handleHeaderLogin = async () => {
+    setIsWalletConnecting(true);
+    try {
+      const account = await requestWalletAuth();
+      setWalletAccount(account);
+      await loadProfileFromChainIfAny(account.address);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Wallet login failed.');
+    } finally {
+      setIsWalletConnecting(false);
+    }
+  };
+
   const handlePinToAddress = async () => {
     if (!walletAccount || !publishResult) return;
     setIsPinning(true);
@@ -494,21 +545,12 @@ function App() {
       reader.onload = (event) => {
         const text = event.target?.result as string;
         try {
-          // Parse HTML to find the data script
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(text, 'text/html');
-          const scriptTag = doc.getElementById('defifolio-data');
-          
-          if (scriptTag && scriptTag.textContent) {
-            const importedProfile = validateImportedProfile(JSON.parse(scriptTag.textContent));
-            if (importedProfile) {
-               setProfile(importedProfile);
-               alert('Profile loaded successfully!');
-            } else {
-               alert('Invalid portfolio file.');
-            }
+          const importedProfile = parseProfileFromHtml(text);
+          if (importedProfile) {
+             setProfile(importedProfile);
+             alert('Profile loaded successfully!');
           } else {
-            alert('Could not find portfolio data in this file.');
+             alert('Could not find a valid portfolio in this file.');
           }
         } catch (err) {
           console.error(err);
@@ -574,6 +616,24 @@ function App() {
                 >
                     <FileJson size={14} /> Import
                 </button>
+                {walletAccount ? (
+                    <button
+                        onClick={handlePhpCoinLogout}
+                        className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors"
+                        title={`Signed in as ${walletAccount.address}`}
+                    >
+                        <Wallet size={14} /> {walletAccount.address.slice(0, 6)}…{walletAccount.address.slice(-4)}
+                    </button>
+                ) : (
+                    <button
+                        onClick={handleHeaderLogin}
+                        disabled={isWalletConnecting}
+                        className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-60"
+                        title="Login with PHPCoin to load your saved profile"
+                    >
+                        <Wallet size={14} /> {isWalletConnecting ? 'Connecting...' : 'Login'}
+                    </button>
+                )}
             </div>
         </div>
         <div className="flex-1 overflow-hidden">

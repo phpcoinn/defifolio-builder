@@ -154,9 +154,22 @@ function _getProfileData() {
     return $profile;
 }
 
+function _getGeminiApiKey() {
+    // Prefer a local, non-committed key file scoped to this app (avoids touching
+    // the shared PHP-FPM pool config, which every vhost on this host uses).
+    $keyFile = __DIR__ . '/../lib/gemini_api_key.txt';
+    if (file_exists($keyFile)) {
+        $key = trim((string) file_get_contents($keyFile));
+        if ($key !== '') {
+            return $key;
+        }
+    }
+    return getenv('GEMINI_API_KEY') ?: '';
+}
+
 function _callGeminiApi($prompt) {
 
-    $apiKey = getenv('GEMINI_API_KEY');
+    $apiKey = _getGeminiApiKey();
     if (empty($apiKey)) {
         http_response_code(500);
         echo json_encode(['error' => 'Server configuration error: API Key not set.']);
