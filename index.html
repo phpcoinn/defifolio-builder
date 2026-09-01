@@ -7,6 +7,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
+        darkMode: 'class',
         theme: {
           extend: {
             colors: {
@@ -24,6 +25,14 @@
         }
       }
     </script>
+    <script>
+      // Applied before paint to avoid a light/dark flash on load.
+      (function () {
+        var stored = localStorage.getItem('defifolio_theme');
+        var isDark = stored ? stored === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+        document.documentElement.classList.toggle('dark', isDark);
+      })();
+    </script>
   <script type="importmap">
 {
   "imports": {
@@ -38,7 +47,7 @@
 }
 </script>
 </head>
-  <body class="bg-crypto-dark text-slate-200 h-screen overflow-hidden">
+  <body class="bg-slate-50 dark:bg-crypto-dark text-slate-800 dark:text-slate-200 h-screen overflow-hidden">
     <div id="root" class="h-full"></div>
     <script type="module" src="/index.tsx"></script>
   </body>

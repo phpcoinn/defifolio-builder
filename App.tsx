@@ -2,12 +2,13 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Editor } from './components/Editor';
 import { PortfolioPreview } from './components/PortfolioPreview';
 import { INITIAL_PROFILE, UserProfile } from './types';
-import { UploadCloud, Smartphone, Monitor, Download, FileJson, Rocket, X, Copy, ExternalLink, Check, Globe, Edit3, Eye } from 'lucide-react';
+import { UploadCloud, Smartphone, Monitor, Download, FileJson, Rocket, X, Copy, ExternalLink, Check, Globe, Edit3, Eye, Sun, Moon } from 'lucide-react';
 
 // Configuration
-const PUBLISH_API_URL = 'https://dap.ad/ipfs.php?q=publish_ipfs'; 
+const PUBLISH_API_URL = 'https://dap.ad/ipfs.php?q=publish_ipfs';
 const IPFS_GATEWAY_URL = 'https://ipfs.io/ipfs/'; // Configurable Gateway URL
 const STORAGE_KEY = 'defifolio_draft_v1';
+const THEME_STORAGE_KEY = 'defifolio_theme';
 const SHOW_DNS_SECTION = false; // Set to true to show the PHPCoin DNS promotion
 
 // SVG Paths for the exported HTML to avoid dependency on external icon libs
@@ -43,13 +44,20 @@ function App() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [publishResult, setPublishResult] = useState<{ cid: string; url: string } | null>(null);
   const [hasCopiedCid, setHasCopiedCid] = useState(false);
-  
+  const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-save effect: Save to localStorage whenever profile changes
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profile));
   }, [profile]);
+
+  // Sync theme choice to <html> class and localStorage
+  useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDarkMode);
+    localStorage.setItem(THEME_STORAGE_KEY, isDarkMode ? 'dark' : 'light');
+  }, [isDarkMode]);
 
   // Helper for generating the HTML
   const generateHtml = (p: UserProfile) => {
@@ -370,7 +378,7 @@ function App() {
   };
 
   return (
-    <div className="flex h-screen w-screen bg-crypto-dark text-slate-200 font-sans overflow-hidden flex-col md:flex-row">
+    <div className="flex h-screen w-screen bg-slate-50 dark:bg-crypto-dark text-slate-800 dark:text-slate-200 font-sans overflow-hidden flex-col md:flex-row">
       {/* Hidden Import Input */}
       <input 
         type="file" 
@@ -381,17 +389,17 @@ function App() {
       />
 
        {/* Mobile Nav - Visible only on small screens */}
-       <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-slate-900 border-t border-slate-800 flex items-center justify-around z-50 pb-safe">
-          <button 
+       <div className="md:hidden fixed bottom-0 left-0 right-0 h-16 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex items-center justify-around z-50 pb-safe">
+          <button
             onClick={() => setMobileTab('editor')}
-            className={`flex flex-col items-center gap-1 p-2 ${mobileTab === 'editor' ? 'text-crypto-accent' : 'text-slate-500'}`}
+            className={`flex flex-col items-center gap-1 p-2 ${mobileTab === 'editor' ? 'text-crypto-accent' : 'text-slate-400 dark:text-slate-500'}`}
           >
             <Edit3 size={20} />
             <span className="text-[10px] font-medium">Editor</span>
           </button>
-          <button 
+          <button
             onClick={() => setMobileTab('preview')}
-            className={`flex flex-col items-center gap-1 p-2 ${mobileTab === 'preview' ? 'text-crypto-accent' : 'text-slate-500'}`}
+            className={`flex flex-col items-center gap-1 p-2 ${mobileTab === 'preview' ? 'text-crypto-accent' : 'text-slate-400 dark:text-slate-500'}`}
           >
             <Eye size={20} />
             <span className="text-[10px] font-medium">Preview</span>
@@ -399,19 +407,28 @@ function App() {
        </div>
 
       {/* Left Panel: Editor */}
-      <div className={`${mobileTab === 'editor' ? 'flex' : 'hidden'} md:flex w-full md:w-[400px] flex-shrink-0 flex-col border-r border-slate-800 bg-crypto-panel z-20 shadow-2xl h-full`}>
-        <div className="p-4 border-b border-slate-800 flex items-center justify-between shrink-0">
+      <div className={`${mobileTab === 'editor' ? 'flex' : 'hidden'} md:flex w-full md:w-[400px] flex-shrink-0 flex-col border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-crypto-panel z-20 shadow-2xl h-full`}>
+        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between shrink-0">
             <div className="flex items-center gap-2">
                 <div className="w-8 h-8 rounded bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center font-bold text-white">D</div>
                 <h1 className="font-bold text-lg tracking-tight">DeFiFolio</h1>
             </div>
-            <button 
-                onClick={handleImportClick}
-                className="flex items-center gap-1.5 text-xs font-medium text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-lg transition-colors"
-                title="Import existing portfolio HTML"
-            >
-                <FileJson size={14} /> Import
-            </button>
+            <div className="flex items-center gap-2">
+                <button
+                    onClick={() => setIsDarkMode(prev => !prev)}
+                    className="flex items-center justify-center text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 w-8 h-8 rounded-lg transition-colors"
+                    title={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+                >
+                    {isDarkMode ? <Sun size={14} /> : <Moon size={14} />}
+                </button>
+                <button
+                    onClick={handleImportClick}
+                    className="flex items-center gap-1.5 text-xs font-medium text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-lg transition-colors"
+                    title="Import existing portfolio HTML"
+                >
+                    <FileJson size={14} /> Import
+                </button>
+            </div>
         </div>
         <div className="flex-1 overflow-hidden">
              <Editor profile={profile} setProfile={setProfile} />
@@ -419,21 +436,21 @@ function App() {
       </div>
 
       {/* Right Panel: Preview Area */}
-      <div className={`${mobileTab === 'preview' ? 'flex' : 'hidden'} md:flex flex-1 flex-col bg-[#0f172a] relative h-full`}>
+      <div className={`${mobileTab === 'preview' ? 'flex' : 'hidden'} md:flex flex-1 flex-col bg-slate-50 dark:bg-[#0f172a] relative h-full`}>
         {/* Toolbar */}
-        <div className="h-16 border-b border-slate-800 flex items-center justify-between px-4 md:px-6 bg-slate-900/50 backdrop-blur z-10 shrink-0 gap-2">
+        <div className="h-16 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-4 md:px-6 bg-white/50 dark:bg-slate-900/50 backdrop-blur z-10 shrink-0 gap-2">
             <div className="flex items-center gap-4 hidden md:flex">
-                <span className="text-sm text-slate-500 font-medium">Preview Mode</span>
-                <div className="flex bg-slate-800 rounded-lg p-1 border border-slate-700">
-                    <button 
+                <span className="text-sm text-slate-500 dark:text-slate-500 font-medium">Preview Mode</span>
+                <div className="flex bg-slate-100 dark:bg-slate-800 rounded-lg p-1 border border-slate-200 dark:border-slate-700">
+                    <button
                         onClick={() => setViewMode('desktop')}
-                        className={`p-2 rounded flex items-center gap-2 text-xs font-medium transition-all ${viewMode === 'desktop' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                        className={`p-2 rounded flex items-center gap-2 text-xs font-medium transition-all ${viewMode === 'desktop' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}
                     >
                         <Monitor size={14} /> Desktop
                     </button>
-                    <button 
+                    <button
                         onClick={() => setViewMode('mobile')}
-                        className={`p-2 rounded flex items-center gap-2 text-xs font-medium transition-all ${viewMode === 'mobile' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                        className={`p-2 rounded flex items-center gap-2 text-xs font-medium transition-all ${viewMode === 'mobile' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}
                     >
                         <Smartphone size={14} /> Mobile
                     </button>
@@ -447,10 +464,10 @@ function App() {
               </div>
 
             <div className="flex items-center gap-2">
-                <button 
+                <button
                     onClick={handleDeploy}
                     disabled={isUploading || isPublishing}
-                    className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 px-3 md:px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-70"
+                    className="flex items-center gap-2 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 px-3 md:px-4 py-2 rounded-lg text-sm font-medium transition-all disabled:opacity-70"
                 >
                     {isUploading ? <UploadCloud size={16} className="animate-bounce" /> : <Download size={16} />}
                     <span className="hidden sm:inline">{isUploading ? 'Exporting...' : 'Download HTML'}</span>
@@ -468,7 +485,7 @@ function App() {
         </div>
 
         {/* Preview Container */}
-        <div className="flex-1 overflow-hidden relative flex items-center justify-center bg-slate-950">
+        <div className="flex-1 overflow-hidden relative flex items-center justify-center bg-slate-100 dark:bg-slate-950">
             {/* Dot Grid Background */}
             <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#4b5563 1px, transparent 1px)', backgroundSize: '24px 24px' }}></div>
             
@@ -495,10 +512,10 @@ function App() {
       {/* Success Modal */}
       {publishResult && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
-            <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-md w-full relative shadow-2xl">
-                <button 
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-6 rounded-2xl max-w-md w-full relative shadow-2xl">
+                <button
                     onClick={() => setPublishResult(null)}
-                    className="absolute top-4 right-4 text-slate-400 hover:text-white"
+                    className="absolute top-4 right-4 text-slate-400 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                 >
                     <X size={20} />
                 </button>
@@ -507,17 +524,17 @@ function App() {
                     <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4">
                         <Rocket size={32} className="text-green-500" />
                     </div>
-                    <h2 className="text-2xl font-bold text-white mb-2">Portfolio Published!</h2>
-                    <p className="text-slate-400 text-sm">Your decentralized portfolio is live on IPFS.</p>
+                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">Portfolio Published!</h2>
+                    <p className="text-slate-500 dark:text-slate-400 text-sm">Your decentralized portfolio is live on IPFS.</p>
                 </div>
 
-                <div className="bg-slate-950 border border-slate-800 rounded-lg p-4 mb-6">
+                <div className="bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-4 mb-6">
                     <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 block">IPFS CID</label>
-                    <div className="flex items-center gap-2 bg-slate-900 border border-slate-800 rounded p-2">
-                        <code className="text-xs text-slate-300 font-mono flex-1 truncate">{publishResult.cid}</code>
-                        <button 
+                    <div className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded p-2">
+                        <code className="text-xs text-slate-700 dark:text-slate-300 font-mono flex-1 truncate">{publishResult.cid}</code>
+                        <button
                             onClick={handleCopyCid}
-                            className="text-slate-400 hover:text-white transition-colors"
+                            className="text-slate-400 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition-colors"
                         >
                             {hasCopiedCid ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
                         </button>

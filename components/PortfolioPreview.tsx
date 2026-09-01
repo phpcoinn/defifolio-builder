@@ -257,27 +257,27 @@ export const PortfolioPreview: React.FC<PreviewProps> = ({ profile }) => {
         {/* QR Modal */}
         {activeQr && (
             <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm" onClick={() => setActiveQr(null)}>
-                <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-sm w-full relative" onClick={e => e.stopPropagation()}>
-                    <button 
+                <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 p-6 rounded-2xl max-w-sm w-full relative" onClick={e => e.stopPropagation()}>
+                    <button
                         onClick={() => setActiveQr(null)}
-                        className="absolute top-4 right-4 text-slate-400 hover:text-white"
+                        className="absolute top-4 right-4 text-slate-400 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
                     >
                         <X size={20} />
                     </button>
-                    
-                    <h3 className="text-xl font-bold mb-6 text-center text-white">Scan to Pay</h3>
-                    
+
+                    <h3 className="text-xl font-bold mb-6 text-center text-slate-900 dark:text-white">Scan to Pay</h3>
+
                     <div className="flex justify-center mb-6">
                         <div className="bg-white p-4 rounded-xl">
-                            <img 
+                            <img
                                 src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${profile.addresses.find(a => a.id === activeQr)?.address}`}
                                 alt="QR Code"
                                 className="w-48 h-48"
                             />
                         </div>
                     </div>
-                    
-                    <p className="text-center text-slate-400 font-mono text-xs break-all bg-slate-800 p-3 rounded">
+
+                    <p className="text-center text-slate-500 dark:text-slate-400 font-mono text-xs break-all bg-slate-100 dark:bg-slate-800 p-3 rounded">
                         {profile.addresses.find(a => a.id === activeQr)?.address}
                     </p>
                 </div>
