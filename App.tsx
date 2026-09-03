@@ -169,6 +169,34 @@ function App() {
       .catch(() => setWalletAccount(null));
   }, []);
 
+  // Re-sync the wallet session from the backend whenever the tab regains
+  // focus. The wallet-connect popup flow (services/walletConnect.ts) reports
+  // login success via postMessage, but on iOS Safari that message can be
+  // dropped or delayed if the tab was backgrounded during approval (e.g. a
+  // hand-off to the native wallet app) - the backend session cookie still
+  // gets set, but this tab never hears about it and is left showing
+  // "Connecting" indefinitely. Checking the real session on refocus recovers
+  // from that without requiring a manual page reload.
+  useEffect(() => {
+    const resync = () => {
+      if (document.visibilityState !== 'visible') return;
+      getWalletSession()
+        .then((session) => {
+          if (session.account) {
+            setWalletAccount(session.account);
+            setIsWalletConnecting(false);
+          }
+        })
+        .catch(() => {});
+    };
+    document.addEventListener('visibilitychange', resync);
+    window.addEventListener('focus', resync);
+    return () => {
+      document.removeEventListener('visibilitychange', resync);
+      window.removeEventListener('focus', resync);
+    };
+  }, []);
+
   // Whenever we know who's signed in, check whether they already have a
   // permanent link so we don't re-pitch "get one" to someone who already has one.
   useEffect(() => {

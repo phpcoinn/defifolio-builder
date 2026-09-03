@@ -1,7 +1,7 @@
 // PHPCoin wallet-connect popup protocol, ported from dapad-v2's
 // apps/frontend/src/lib/walletConnect.js — same wallet, same message shapes,
 // so this must stay wire-compatible with what the wallet app expects.
-import { completeWalletLogin, issueWalletChallenge, WalletAccount } from './walletApi';
+import { completeWalletLogin, getWalletSession, issueWalletChallenge, WalletAccount } from './walletApi';
 
 const WALLET_CONNECT_URL = import.meta.env.VITE_WALLET_CONNECT_URL || 'https://wallet.phpcoin.net/#/connect';
 const DEFAULT_TIMEOUT_MS = 120000;
@@ -48,16 +48,44 @@ export async function requestWalletAuth(): Promise<WalletAccount> {
   }
 
   return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
+    // The wallet reports success via postMessage below, but on iOS Safari
+    // that message can be dropped or delayed if this tab was backgrounded
+    // during approval (e.g. a hand-off to the native wallet app) while the
+    // backend session was already established. Before treating a closed
+    // popup or an elapsed timeout as a failure, double-check the real
+    // session so a successful login doesn't get reported as an error.
+    let settled = false;
+
+    async function resolveOrFail(fallbackError: string) {
+      if (settled) return;
+      try {
+        const session = await getWalletSession();
+        if (settled) return;
+        if (session.account) {
+          settled = true;
+          cleanup();
+          popup!.close();
+          resolve(session.account);
+          return;
+        }
+      } catch {
+        // fall through to the failure below
+      }
+      if (settled) return;
+      settled = true;
       cleanup();
-      popup.close();
-      reject(new Error('Wallet connection timed out.'));
+      popup!.close();
+      reject(new Error(fallbackError));
+    }
+
+    const timeout = window.setTimeout(() => {
+      resolveOrFail('Wallet connection timed out.');
     }, DEFAULT_TIMEOUT_MS);
 
     const closePoll = window.setInterval(() => {
       if (popup.closed) {
-        cleanup();
-        reject(new Error('Wallet popup was closed.'));
+        window.clearInterval(closePoll);
+        resolveOrFail('Wallet popup was closed.');
       }
     }, 400);
 
