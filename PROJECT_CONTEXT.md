@@ -175,3 +175,17 @@ interface PublishRecord {
 5.  **Security:** All user-controlled values interpolated into `generateHtml()`'s raw HTML string must be escaped/validated (text via `escapeHtml`, colors via `sanitizeColor`, URLs via `sanitizeUrl`) — this is a real injection surface, already fixed once this session, don't reintroduce it.
 6.  **Backend structure:** new PHP entry points that need direct web access go in `server/public/`; shared logic that shouldn't be directly requestable goes in `server/lib/`. Never put secrets in git-tracked files — use a local, gitignored key file (see `server/lib/gemini_api_key.txt`) rather than the shared PHP-FPM pool config, which is shared by every vhost on the host.
 7.  **Deployment:** the routine frontend build + deploy to `defifolio.dap.ad` happens automatically after each relevant change (user tests on live, not locally) — see `PROJECT_STATUS.md`'s "Development Model" for the full deploy commands and the boundary of what still needs explicit approval.
+
+### Git Push Authentication on the Deployment Workstation
+
+The deployment workstation keeps its GitHub token in the local, non-repository
+file `/home/marko/web/phpcoin/node/dev/git_token.txt`. To push without placing
+the token in the remote URL or saving it in Git configuration, use a one-command
+credential helper:
+
+```bash
+git -c 'credential.helper=!f() { echo username=x-access-token; printf "password="; tr -d "\r\n" < /home/marko/web/phpcoin/node/dev/git_token.txt; echo; }; f' push origin main
+```
+
+The token file must never be copied into this repository, committed, printed,
+or included in deployment logs.
