@@ -265,18 +265,30 @@ function _callGeminiApi($prompt) {
     exit;
 }
 
-$q = $_REQUEST['q'];
-if(!function_exists($q)) {
+$q = isset($_GET['q']) && is_string($_GET['q']) ? $_GET['q'] : '';
+$actions = [
+    'publish_ipfs' => 'publish_ipfs',
+    'fetch_profile_html' => 'fetch_profile_html',
+    'authSession' => 'authSession',
+    'authChallenge' => 'authChallenge',
+    'walletLogin' => 'walletLogin',
+    'authLogout' => 'authLogout',
+    'generate_bio' => 'generate_bio',
+    'analyze_portfolio' => 'analyze_portfolio',
+];
+
+if (!isset($actions[$q])) {
     http_response_code(400);
-    error_log("Method $q is not defined");
-    echo json_encode(['success'=>false,'error' => "Method $q is not defined"]);
+    error_log('Unknown API action: ' . $q);
+    echo json_encode(['success' => false, 'error' => 'Unknown API action']);
     exit;
 }
 
 try {
-    $data = call_user_func($q);
+    $data = call_user_func($actions[$q]);
     echo json_encode($data);
 } catch (Throwable $e) {
-    http_response_code(400);
-    echo json_encode(['success'=>false,'error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+    error_log('DeFiFolio API error [' . $q . ']: ' . $e);
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'Request failed']);
 }
