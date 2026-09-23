@@ -6,6 +6,7 @@ import { UploadCloud, Smartphone, Monitor, Download, FileJson, Rocket, X, Copy, 
 import { requestWalletAuth, requestWalletTransactionSignature } from './services/walletConnect';
 import { getWalletSession, logoutWalletSession, WalletAccount } from './services/walletApi';
 import { buildPublishTransaction, submitTransaction, findLatestPublish, PublishRecord, CHAIN_ID } from './services/txData';
+import { trackEvent } from './services/analytics';
 
 // Configuration
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8034';
@@ -150,6 +151,11 @@ function App() {
   // Skips the next dirty-flag update - set right before a "fresh load" setProfile
   // call (import, wallet load) so loading a profile doesn't itself count as an edit.
   const skipNextDirtyFlag = useRef(true); // starts true so the initial mount doesn't count either
+  const hasTrackedEditorStart = useRef(false);
+
+  useEffect(() => {
+    trackEvent('app_opened');
+  }, []);
 
   // Auto-save effect: save to localStorage whenever profile changes, and track
   // whether there are unsaved edits (vs. a freshly loaded/saved profile).
@@ -159,6 +165,10 @@ function App() {
       skipNextDirtyFlag.current = false;
     } else {
       setHasUnsavedChanges(true);
+      if (!hasTrackedEditorStart.current) {
+        hasTrackedEditorStart.current = true;
+        trackEvent('editor_started');
+      }
     }
   }, [profile]);
 
@@ -447,6 +457,7 @@ function App() {
       downloadAnchorNode.click();
       downloadAnchorNode.remove();
       URL.revokeObjectURL(url);
+      trackEvent('html_exported');
     }, 1000);
   };
 
@@ -488,6 +499,7 @@ function App() {
     try {
         const cid = await publishToIpfs();
         setPublishResult({ cid, url: `${IPFS_GATEWAY_URL}${cid}` });
+        trackEvent('publish_success');
     } catch (error) {
         console.error("Publishing error:", error);
         alert("Failed to publish to IPFS. Please check that the backend is running and configured correctly.");
@@ -506,6 +518,7 @@ function App() {
       setExistingPublish({ txId, cid });
       setJustUpdatedTxId(txId);
       setHasUnsavedChanges(false);
+      trackEvent('save_changes_success');
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Could not save changes.');
     } finally {
@@ -526,6 +539,7 @@ function App() {
     try {
       const account = await requestWalletAuth();
       setWalletAccount(account);
+      trackEvent('wallet_login_success');
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Wallet login failed.');
     } finally {
@@ -580,6 +594,7 @@ function App() {
     try {
       const account = await requestWalletAuth();
       setWalletAccount(account);
+      trackEvent('wallet_login_success');
       await loadProfileFromChainIfAny(account.address);
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Wallet login failed.');
@@ -595,6 +610,7 @@ function App() {
       const txId = await pinToChain(publishResult.cid);
       setExistingPublish({ txId, cid: publishResult.cid });
       setJustUpdatedTxId(txId);
+      trackEvent('permanent_link_success');
     } catch (error) {
       alert(error instanceof Error ? error.message : 'Could not create the permanent link.');
     } finally {
@@ -618,6 +634,7 @@ function App() {
              skipNextDirtyFlag.current = true;
              setProfile(importedProfile);
              setHasUnsavedChanges(false);
+             trackEvent('profile_imported');
              alert('Profile loaded successfully!');
           } else {
              alert('Could not find a valid portfolio in this file.');

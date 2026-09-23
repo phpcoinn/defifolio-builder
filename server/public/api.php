@@ -128,6 +128,46 @@ function authLogout() {
     return WalletAuth::logout();
 }
 
+function track_event() {
+    rate_limit('track_event', 120, 60);
+
+    $data = _getJsonData();
+    $event = is_array($data) && isset($data['event']) && is_string($data['event'])
+        ? $data['event']
+        : '';
+    $allowedEvents = [
+        'app_opened',
+        'editor_started',
+        'profile_imported',
+        'html_exported',
+        'ai_bio_generated',
+        'ai_analysis_generated',
+        'publish_success',
+        'wallet_login_success',
+        'permanent_link_success',
+        'save_changes_success',
+    ];
+
+    if (!in_array($event, $allowedEvents, true)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Invalid activity event']);
+        exit;
+    }
+
+    $logDir = getenv('DEFIFOLIO_ACTIVITY_LOG_DIR') ?: '/var/log/defifolio';
+    $logFile = $logDir . '/activity-' . gmdate('Y-m-d') . '.jsonl';
+    $line = json_encode([
+        'time' => gmdate('c'),
+        'event' => $event,
+    ], JSON_UNESCAPED_SLASHES) . "\n";
+
+    if (!is_dir($logDir) || file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX) === false) {
+        throw new RuntimeException('Could not write activity log');
+    }
+
+    return ['success' => true];
+}
+
 function generate_bio() {
     rate_limit('generate_bio', 10, 60);
     $profile = _getProfileData();
@@ -273,6 +313,7 @@ $actions = [
     'authChallenge' => 'authChallenge',
     'walletLogin' => 'walletLogin',
     'authLogout' => 'authLogout',
+    'track_event' => 'track_event',
     'generate_bio' => 'generate_bio',
     'analyze_portfolio' => 'analyze_portfolio',
 ];

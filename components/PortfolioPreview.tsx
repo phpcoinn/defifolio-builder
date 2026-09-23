@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { UserProfile } from '../types';
 import { ExternalLink, Copy, Check, QrCode, Twitter, Github, Globe, Send, Gamepad2, Sparkles, X, Loader2 } from 'lucide-react';
 import { analyzePortfolio } from '../services/gemini';
+import { trackEvent } from '../services/analytics';
 
 interface PreviewProps {
   profile: UserProfile;
@@ -31,6 +32,7 @@ export const PortfolioPreview: React.FC<PreviewProps> = ({ profile }) => {
     try {
       const result = await analyzePortfolio(profile);
       setAiAnalysis(result);
+      trackEvent('ai_analysis_generated');
     } finally {
       setIsAnalyzing(false);
     }

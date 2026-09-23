@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { UserProfile } from '../types';
 import { generateBio } from '../services/gemini';
 import { Loader2, Sparkles } from 'lucide-react';
+import { trackEvent } from '../services/analytics';
 
 interface BioGeneratorProps {
   profile: UserProfile;
@@ -18,6 +19,7 @@ export const BioGenerator: React.FC<BioGeneratorProps> = ({ profile, onBioGenera
     try {
       const bio = await generateBio(profile);
       onBioGenerated(bio);
+      trackEvent('ai_bio_generated');
     } catch (e) {
       setError("Failed to generate bio. Try again.");
     } finally {
