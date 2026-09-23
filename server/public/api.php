@@ -154,15 +154,69 @@ function track_event() {
         exit;
     }
 
+    $session = isset($data['session']) && is_string($data['session']) ? strtolower($data['session']) : '';
+    if (!preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $session)) {
+        http_response_code(400);
+        echo json_encode(['error' => 'Invalid activity session']);
+        exit;
+    }
+
+    $sanitizeTag = static function ($value): ?string {
+        if (!is_string($value)) return null;
+        $value = strtolower(trim($value));
+        return preg_match('/^[a-z0-9._-]{1,64}$/', $value) ? $value : null;
+    };
+    $source = $sanitizeTag($data['source'] ?? null);
+    $campaign = $sanitizeTag($data['campaign'] ?? null);
+
+    $referrer = isset($data['referrer']) && is_string($data['referrer'])
+        ? strtolower(trim($data['referrer']))
+        : '';
+    if (!preg_match('/^(?=.{1,253}$)[a-z0-9.-]+$/', $referrer)) {
+        $referrer = null;
+    }
+
+    $userAgent = (string) ($_SERVER['HTTP_USER_AGENT'] ?? '');
+    $device = preg_match('/mobile|android|iphone|ipad|ipod/i', $userAgent) ? 'mobile' : 'desktop';
+    $isBot = $userAgent === '' || (bool) preg_match(
+        '/bot|crawler|spider|slurp|bingpreview|facebookexternalhit|headlesschrome|lighthouse|curl|wget/i',
+        $userAgent
+    );
+
+    $secretFile = getenv('DEFIFOLIO_ACTIVITY_HMAC_KEY_FILE') ?: '/var/lib/defifolio/activity_hmac_key';
+    $secret = is_file($secretFile) ? trim((string) file_get_contents($secretFile)) : '';
+    if ($secret === '') {
+        throw new RuntimeException('Activity logger is not configured');
+    }
+    $ip = (string) ($_SERVER['REMOTE_ADDR'] ?? 'unknown');
+    $visitor = substr(hash_hmac('sha256', $ip . "\n" . $userAgent, $secret), 0, 20);
+
     $logDir = getenv('DEFIFOLIO_ACTIVITY_LOG_DIR') ?: '/var/log/defifolio';
     $logFile = $logDir . '/activity-' . gmdate('Y-m-d') . '.jsonl';
-    $line = json_encode([
+    $record = [
         'time' => gmdate('c'),
         'event' => $event,
-    ], JSON_UNESCAPED_SLASHES) . "\n";
+        'session' => $session,
+        'visitor' => $visitor,
+        'device' => $device,
+        'bot' => $isBot,
+    ];
+    if ($source !== null) $record['source'] = $source;
+    if ($campaign !== null) $record['campaign'] = $campaign;
+    if ($referrer !== null) $record['referrer'] = $referrer;
+    $line = json_encode($record, JSON_UNESCAPED_SLASHES) . "\n";
 
     if (!is_dir($logDir) || file_put_contents($logFile, $line, FILE_APPEND | LOCK_EX) === false) {
         throw new RuntimeException('Could not write activity log');
+    }
+
+    // Daily files make retention cheap: opportunistically remove anything older
+    // than the temporary promotion-tracking window on every successful event.
+    $retentionCutoff = time() - (30 * 86400);
+    foreach (glob($logDir . '/activity-*.jsonl') ?: [] as $candidate) {
+        if (is_file($candidate) && filemtime($candidate) < $retentionCutoff) {
+            unlink($candidate);
+        }
     }
 
     return ['success' => true];
